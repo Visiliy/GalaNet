@@ -1,9 +1,11 @@
 import os
 
 
-file_names = os.listdir("train_imgs")
-path = "train_labels"
-for file_name in file_names:
-    with open(f"{path}/{file_name[:-4]}.txt", "w", encoding="utf-8") as file:
-        file.write(str(int(file_name[0]) - 1))
-print("preprocessing finished")
+dir_names = os.listdir("датасет")
+for i, name in enumerate(dir_names):
+    files = os.listdir("датасет/" + name)
+    for file in files:
+        with open(f"датасет/{name}/{file}_text.txt", "w", encoding="utf-8") as f:
+            f.write(str(i))
+
+print("Ok")
