@@ -161,27 +161,12 @@ class ViT(nn.Module):
 
 def main(path_to_img, num_classes):
     transform = transforms.Compose([
-        transforms.Resize(512),
-        transforms.Lambda(lambda x: ImageOps.pad(
-            x, size=(512, 512),
-            method=Image.Resampling.BILINEAR,
-            color=(255, 255, 255)
-        )),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomVerticalFlip(p=0.5),
-        transforms.ColorJitter(brightness=0.2, contrast=0.3, saturation=0.2),
-        transforms.RandomAffine(
-            degrees=8,
-            translate=(0.08, 0.08),
-            scale=(0.9, 1.1),
-            fill=(255, 255, 255)
-        ),
+        transforms.Resize((512, 512)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     img = Image.open(path_to_img).convert("RGB")
-    img = crop_to_content(img, margin=30)
     img = transform(img).unsqueeze(0)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -209,5 +194,5 @@ def main(path_to_img, num_classes):
 
 
 if __name__ == '__main__':
-    class_name = main("датасет/трезубец/WIN_20251105_16_25_11_Pro.jpg", 7)
+    class_name = main("WIN_20251107_14_37_20_Pro.jpg", 7)
     print(class_name)

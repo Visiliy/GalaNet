@@ -1,27 +1,8 @@
 import os
 import torch.utils.data as data
 import torch
-import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 
-
-def crop_to_content(img: Image.Image, margin: int = 20) -> Image.Image:
-
-    gray = np.array(img.convert('L'))
-    mask = gray < 245
-
-    if not np.any(mask):
-        return img
-
-    coords = np.argwhere(mask)
-    y_min, x_min = coords.min(axis=0)
-    y_max, x_max = coords.max(axis=0)
-    x_min = max(0, x_min - margin)
-    y_min = max(0, y_min - margin)
-    x_max = min(img.width, x_max + margin)
-    y_max = min(img.height, y_max + margin)
-
-    return img.crop((x_min, y_min, x_max, y_max))
 
 class TrainDataset(data.Dataset):
     def __init__(self, path_to_imgs, class_to_index, transform=None):
@@ -44,7 +25,6 @@ class TrainDataset(data.Dataset):
     def __getitem__(self, index):
         img_path, label_path = self.samples[index]
         image = Image.open(img_path).convert("RGB")
-        image = crop_to_content(image, margin=30)
         if self.transform:
             image = self.transform(image)
 
