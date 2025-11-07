@@ -1,10 +1,29 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
+from PIL import Image, ImageOps
 from torchvision import transforms
 import torch.nn.init as init
+import numpy as np
 
+
+def crop_to_content(img: Image.Image, margin: int = 20) -> Image.Image:
+
+    gray = np.array(img.convert('L'))
+    mask = gray < 245
+
+    if not np.any(mask):
+        return img
+
+    coords = np.argwhere(mask)
+    y_min, x_min = coords.min(axis=0)
+    y_max, x_max = coords.max(axis=0)
+    x_min = max(0, x_min - margin)
+    y_min = max(0, y_min - margin)
+    x_max = min(img.width, x_max + margin)
+    y_max = min(img.height, y_max + margin)
+
+    return img.crop((x_min, y_min, x_max, y_max))
 
 
 class PatchEmbedding(nn.Module):
@@ -142,36 +161,53 @@ class ViT(nn.Module):
 
 def main(path_to_img, num_classes):
     transform = transforms.Compose([
-        transforms.CenterCrop((800, 800)),
-        transforms.Resize((384, 384)),
+        transforms.Resize(512),
+        transforms.Lambda(lambda x: ImageOps.pad(
+            x, size=(512, 512),
+            method=Image.Resampling.BILINEAR,
+            color=(255, 255, 255)
+        )),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.2, contrast=0.3, saturation=0.2),
+        transforms.RandomAffine(
+            degrees=8,
+            translate=(0.08, 0.08),
+            scale=(0.9, 1.1),
+            fill=(255, 255, 255)
+        ),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     img = Image.open(path_to_img).convert("RGB")
+    img = crop_to_content(img, margin=30)
     img = transform(img).unsqueeze(0)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print("device: ", device)
 
     model = ViT(
-        img_size=384,
-        patch_size=8,
-        embed_dim=192,
-        depth=6,
-        num_heads=6,
-        num_classes=num_classes
+        img_size=512,
+        patch_size=16,
+        embed_dim=196,
+        depth=4,
+        num_heads=4,
+        num_classes=7
     ).to(device)
 
-    model.load_state_dict(torch.load('model_/ViT.pth', map_location=device))
+    model.load_state_dict(torch.load('model2_/ViT.pth', map_location=device))
 
     model.eval()
 
     with torch.no_grad():
         predict = model(img.to(device))
         probs = F.softmax(predict, dim=1)
-        print(probs.tolist())
+        probs = probs.tolist()[0]
+        print(f"Class: {probs.index(max(probs))},", f"Уверенность: {max(probs)}")
+        return probs.index(max(probs))
 
 
 if __name__ == '__main__':
-    main("train_imgs/603.jpg", 6)
+    class_name = main("датасет/трезубец/WIN_20251105_16_25_11_Pro.jpg", 7)
+    print(class_name)
