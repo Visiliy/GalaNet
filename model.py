@@ -22,7 +22,7 @@ class PatchEmbedding(nn.Module):
 
 
 class LinearPerformerAttention(nn.Module):
-    def __init__(self, dim, heads=8, feature_dim=128, dropout=0.1):
+    def __init__(self, dim, heads=8, feature_dim=16, dropout=0.1):
         super().__init__()
         self.heads = heads
         self.feature_dim = feature_dim
@@ -143,11 +143,11 @@ class ViT(nn.Module):
 
 if __name__ == '__main__':
     transform = transforms.Compose([
-        transforms.Resize((512, 512)),
+        transforms.Resize((64, 64)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    epochs = 200
+    epochs = 100
 
     train_dataset = TrainDataset(path_to_imgs="датасет",class_to_index=7, transform=transform)
 
@@ -156,9 +156,9 @@ if __name__ == '__main__':
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print("device: ", device)
     model = ViT(
-        img_size=512,
-        patch_size=8,
-        embed_dim=196,
+        img_size=64,
+        patch_size=4,
+        embed_dim=16,
         depth=4,
         num_heads=4,
         num_classes=7
@@ -186,7 +186,7 @@ if __name__ == '__main__':
 
         if arv_loss < min_loss:
             min_loss = arv_loss
-            torch.save(model.state_dict(), 'model3_/ViT.pth')
+            torch.save(model.state_dict(), 'model_/ViT.pth')
 
 
 

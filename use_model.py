@@ -1,198 +1,92 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from PIL import Image, ImageOps
-from torchvision import transforms
-import torch.nn.init as init
+import os
+from keras.models import load_model
+from PIL import Image, ImageOps, ImageFilter
 import numpy as np
 
-
-def crop_to_content(img: Image.Image, margin: int = 20) -> Image.Image:
-
-    gray = np.array(img.convert('L'))
-    mask = gray < 245
-
-    if not np.any(mask):
-        return img
-
-    coords = np.argwhere(mask)
-    y_min, x_min = coords.min(axis=0)
-    y_max, x_max = coords.max(axis=0)
-    x_min = max(0, x_min - margin)
-    y_min = max(0, y_min - margin)
-    x_max = min(img.width, x_max + margin)
-    y_max = min(img.height, y_max + margin)
-
-    return img.crop((x_min, y_min, x_max, y_max))
+np.set_printoptions(suppress=True)
 
 
-class PatchEmbedding(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_channels=3, embed_dim=768):
-        super().__init__()
-        self.patch_size = patch_size
-        self.num_patches = (img_size // patch_size) ** 2
-        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
+def _crop_object(image):
+    # Размытие для уменьшения шумов
+    blurred = image.filter(ImageFilter.GaussianBlur(2))
+    blurred_array = np.array(blurred)
 
-    def forward(self, x):
-        x = self.proj(x).flatten(2).transpose(1, 2)
-        return x
+    # Пороговое значение для выделения не‑белых пикселей
+    mask = np.all(blurred_array > 100, axis=-1)  # True для "белых"
+    coords = np.nonzero(~mask)  # Ищем не-белые пиксели
 
+    if len(coords[0]) == 0:
+        return image
 
-class LinearPerformerAttention(nn.Module):
-    def __init__(self, dim, heads=8, feature_dim=128, dropout=0.1):
-        super().__init__()
-        self.heads = heads
-        self.feature_dim = feature_dim
-        self.head_dim = dim // heads
+    top, bottom = np.min(coords[0]), np.max(coords[0])
+    left, right = np.min(coords[1]), np.max(coords[1])
 
-        self.proj_matrix = nn.Parameter(torch.randn(heads, self.head_dim, feature_dim))
-        nn.init.orthogonal_(self.proj_matrix)
+    left = max(0, left - 5)
+    top = max(0, top - 5)
+    right = min(image.width, right + 5)
+    bottom = min(image.height, bottom + 5)
+    cropped = image.crop((left, top, right, bottom))
+    return cropped
 
-        self.to_qkv = nn.Linear(dim, dim * 3, bias=False)
-        self.to_out = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.Dropout(dropout)
-        )
+def model_gala_net(path):
 
-        self._initialize_weights()
+    model = load_model("converted_keras/keras_model.h5", compile=False)
 
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    init.zeros_(m.bias)
+    class_names = open("converted_keras/labels.txt", "r").readlines()
 
-    def forward(self, x, mask=None):
-        if mask is not None:
-            if mask.dim() == 2:
-                mask = mask.unsqueeze(-1)
-            x = x * mask.to(x.dtype)
+    data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
 
-        b, n, d = x.shape
-        h = self.heads
+    image = Image.open(path).convert("RGB")
 
-        qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: t.reshape(b, n, h, -1).transpose(1, 2), qkv)
+    size = (224, 224)
+    image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
 
-        q_proj = torch.einsum('bhnd,hdf->bhnf', q, self.proj_matrix)
-        k_proj = torch.einsum('bhnd,hdf->bhnf', k, self.proj_matrix)
+    image_array = np.asarray(image)
 
-        q_proj = F.elu(q_proj) + 1
-        k_proj = F.elu(k_proj) + 1
+    normalized_image_array = (image_array.astype(np.float32) / 127.5) - 1
 
-        k_v = torch.einsum('bhnf,bhnd->bhfd', k_proj, v)
-        attention_out = torch.einsum('bhnf,bhfd->bhnd', q_proj, k_v)
+    data[0] = normalized_image_array
 
-        k_proj_sum = k_proj.sum(dim=2, keepdim=True)
-        z = 1.0 / (torch.einsum('bhnf,bhf->bhn', q_proj, k_proj_sum.squeeze(2)) + 1e-8)
-        attention_out = attention_out * z.unsqueeze(-1)
-
-        attention_out = attention_out.transpose(1, 2).reshape(b, n, -1)
-        out = self.to_out(attention_out)
-        return out
+    prediction = model.predict(data)
+    index = np.argmax(prediction)
+    class_name = class_names[index]
+    confidence_score = prediction[0][index]
+    return class_name, confidence_score
 
 
-class MLP(nn.Module):
-    def __init__(self, in_features, hidden_features, out_features, dropout=0.1):
-        super().__init__()
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = nn.GELU()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
-        x = self.dropout(x)
-        return x
-
-
-class TransformerBlock(nn.Module):
-    def __init__(self, embed_dim=768, num_heads=12, mlp_ratio=4, dropout=0.1):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.attn = LinearPerformerAttention(embed_dim, num_heads)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        mlp_hidden_dim = int(embed_dim * mlp_ratio)
-        self.mlp = MLP(embed_dim, mlp_hidden_dim, embed_dim, dropout)
-
-    def forward(self, x):
-        x = x + self.attn(self.norm1(x))
-        x = x + self.mlp(self.norm2(x))
-        return x
-
-
-class ViT(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_channels=3, num_classes=1000, embed_dim=768, depth=12,
-                 num_heads=12):
-        super().__init__()
-        self.patch_embed = PatchEmbedding(img_size, patch_size, in_channels, embed_dim)
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, 1 + self.patch_embed.num_patches, embed_dim))
-        self.pos_drop = nn.Dropout(0.1)
-
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
-
-        self.blocks = nn.ModuleList([
-            TransformerBlock(embed_dim, num_heads) for _ in range(depth)
-        ])
-        self.norm = nn.LayerNorm(embed_dim)
-        self.head = nn.Linear(embed_dim, num_classes)
-
-    def forward(self, x):
-        B = x.shape[0]
-        x = self.patch_embed(x)
-        cls_tokens = self.cls_token.expand(B, -1, -1)
-        x = torch.cat((cls_tokens, x), dim=1)
-        x = x + self.pos_embed
-        x = self.pos_drop(x)
-
-        for blk in self.blocks:
-            x = blk(x)
-
-        x = self.norm(x)
-        x = self.head(x[:, 0])
-        return x
-
-
-def main(path_to_img, num_classes):
-    transform = transforms.Compose([
-        transforms.Resize((512, 512)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
+def main(path_to_img):
     img = Image.open(path_to_img).convert("RGB")
-    img = transform(img).unsqueeze(0)
-
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print("device: ", device)
-
-    model = ViT(
-        img_size=512,
-        patch_size=16,
-        embed_dim=196,
-        depth=4,
-        num_heads=4,
-        num_classes=7
-    ).to(device)
-
-    model.load_state_dict(torch.load('model2_/ViT.pth', map_location=device))
-
-    model.eval()
-
-    with torch.no_grad():
-        predict = model(img.to(device))
-        probs = F.softmax(predict, dim=1)
-        probs = probs.tolist()[0]
-        print(f"Class: {probs.index(max(probs))},", f"Уверенность: {max(probs)}")
-        return probs.index(max(probs))
+    img = _crop_object(img)
+    path = "converted_keras/img.jpg"
+    img.save(path)
+    class_name, confidence_score = model_gala_net(path)
+    return int(class_name.split("\n")[-2][-1])
 
 
 if __name__ == '__main__':
-    class_name = main("WIN_20251107_14_37_20_Pro.jpg", 7)
-    print(class_name)
+    validation = True
+    if validation:
+        folders = os.listdir('датасет 3 (1)')
+        max_len = 0
+        cnt = 0
+        for f in folders:
+            if "." not in f:
+                files = os.listdir(f'датасет 3 (1)/{f}')
+                img = ""
+                label = 0
+                for file in files:
+                    if file.endswith('.jpg'):
+                        img = f"датасет 3 (1)/{f}/{file}"
+                    if file.endswith('.txt'):
+                        with open(f"датасет 3 (1)/{f}/{file}", "r", encoding="utf-8") as text_file:
+                            label = int(text_file.read().strip("\n"))
+
+                class_name = main(img)
+
+                if class_name == label:
+                    cnt += 1
+                max_len += 1
+        print(cnt / max_len)
+    else:
+        print(main("датасет/Диод кр син зел желт/WIN_20251028_17_56_33_Pro_obj.png"))
