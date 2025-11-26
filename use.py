@@ -1,22 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image, ImageOps
-import numpy as np
 import cv2
 from torchvision import transforms
 import math
 import warnings
+from keras.models import load_model
+from PIL import Image, ImageOps
+import numpy as np
 
 warnings.filterwarnings('ignore')
 
-try:
-    from tensorflow.keras.models import load_model
-except ImportError:
-    try:
-        from keras.models import load_model
-    except ImportError:
-        load_model = None
 
 
 class DoubleConv(nn.Module):
@@ -117,24 +111,14 @@ def select_device():
 def load_models():
     device = select_device()
     unet_model = UNetHeatmap(n_channels=3, n_classes=1).to(device)
-    try:
-        unet_model.load_state_dict(torch.load('best_unet_heatmap.pth', map_location=device))
-    except Exception:
-        pass
+    unet_model.load_state_dict(torch.load('best_unet_heatmap.pth', map_location=device))
     unet_model.eval()
 
-    keras_model = None
-    if load_model is not None:
-        try:
-            keras_model = load_model("converted_keras/keras_model.h5", compile=False)
-        except Exception:
-            keras_model = None
+    keras_model = load_model("converted_keras (1)/keras_model.h5", compile=False)
+    print(keras_model)
 
-    try:
-        with open("converted_keras/labels.txt", "r", encoding="utf-8") as f:
-            class_names = [line.strip() for line in f.readlines() if line.strip()]
-    except Exception:
-        class_names = ["class_0", "class_1"]
+    with open("converted_keras (1)/labels.txt", "r", encoding="utf-8") as f:
+        class_names = [line.strip() for line in f.readlines() if line.strip()]
 
     transform = transforms.Compose([transforms.Resize((256, 256)), transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
@@ -162,7 +146,7 @@ def find_components(heatmap, min_area=50):
     return centers, boxes, thresh
 
 
-def clamp_bbox(x, y, w, h, img_w, img_h, pad=30):
+def clamp_bbox(x, y, w, h, img_w, img_h, pad=50):
     x1 = max(0, x - pad)
     y1 = max(0, y - pad)
     x2 = min(img_w, x + w + pad)
@@ -221,27 +205,19 @@ def process_image(image_path):
         patch = original_image.crop((x1, y1, x2, y2))
         patch = ImageOps.fit(patch, (224, 224), Image.Resampling.LANCZOS)
         patch_array = np.asarray(patch).astype(np.float32)
-        if keras_model is not None:
-            normalized_array = (patch_array / 127.5) - 1.0
-            data = np.expand_dims(normalized_array, axis=0)
-            try:
-                prediction = keras_model.predict(data, verbose=0)
-                index = int(np.argmax(prediction, axis=1)[0])
-                confidence = float(prediction[0][index])
-                class_name = class_names[index].split(' ', 1)[-1].strip() if index < len(class_names) else f"class_{index}"
-            except Exception:
-                class_name = 'unknown'
-                confidence = 0.0
-        else:
-            class_name = 'unknown'
-            confidence = 0.0
+        normalized_array = (patch_array / 127.5) - 1.0
+        data = np.expand_dims(normalized_array, axis=0)
+        prediction = keras_model.predict(data, verbose=0)
+        index = int(np.argmax(prediction, axis=1)[0])
+        confidence = float(prediction[0][index])
+        class_name = class_names[index].split(' ', 1)[-1].strip() if index < len(class_names) else f"class_{index}"
         distance = math.hypot(cx, cy)
-        results.append({'class': class_name, 'confidence': confidence, 'coordinates': (cx, cy), 'bbox': (x1, y1, x2, y2), 'distance': distance})
+        results.append({'class': class_name, 'confidence': confidence, 'coordinates': (cx / orig_w, cy / orig_h), 'distance': distance})
     results.sort(key=lambda x: x['distance'])
     return results
 
 
 if __name__ == "__main__":
-    results = process_image("dt/Фото 8/WIN_20251107_18_28_49_Pro.jpg")
+    results = process_image("датасет 2/Фото 1/WIN_20251107_18_27_57_Pro.jpg")
     for item in results:
-        print(f"Class: {item['class']}, Confidence: {item['confidence']:.4f}, Coordinates: {item['coordinates']}, BBox: {item['bbox']}")
+        print(f"Class: {item['class']}, Confidence: {item['confidence']:.4f}, Coordinates: {item['coordinates']}")
