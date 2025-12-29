@@ -29,6 +29,9 @@ class HeatmapDataset(Dataset):
                             self.samples.append((img_path, txt_path))
 
         self.transform = T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomRotation(10),
+            T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
@@ -180,10 +183,10 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.BCELoss()
 
-    train_loader = DataLoader(HeatmapDataset(root_dir='dt', sigma=15, target_size=(256, 256)),
+    train_loader = DataLoader(HeatmapDataset(root_dir='датасет 2', sigma=15, target_size=(256, 256)),
                               batch_size=4, shuffle=True, num_workers=4)
 
-    num_epochs = 50
+    num_epochs = 70
     best_train_loss = float('inf')
 
     for epoch in range(num_epochs):
@@ -209,4 +212,4 @@ if __name__ == '__main__':
 
         if train_loss < best_train_loss:
             best_train_loss = train_loss
-            torch.save(model.state_dict(), 'best_unet_heatmap.pth')
+            torch.save(model.state_dict(), 'best_unet_heatmap1.pth')

@@ -1,0 +1,10 @@
+names:
+  0: diod
+  1: kolbaska
+  2: little kondensator
+  3: orange
+  4: rezistor
+  5: blue rezistor
+  6: trezubec
+path: .
+train: train.txt

@@ -11,7 +11,7 @@ class_names = open("converted_keras/labels.txt", "r").readlines()
 
 data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
 
-image = Image.open("датасет/Диод кр син зел желт/WIN_20251028_17_56_33_Pro_obj.png").convert("RGB")
+image = Image.open("датасет/1/WIN_20251028_17_56_33_Pro_obj.png").convert("RGB")
 
 size = (224, 224)
 image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)

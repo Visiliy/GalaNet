@@ -8,7 +8,7 @@ import torchvision.transforms as T
 from torch.utils.data import Dataset
 import glob
 from scipy.ndimage import label, center_of_mass
-
+from PIL import ImageOps
 
 
 class HeatmapDataset(Dataset):
@@ -137,7 +137,7 @@ model.load_state_dict(torch.load('best_unet_heatmap.pth', map_location=device, w
 model.eval()
 
 dataset = HeatmapDataset(root_dir='датасет 2', target_size=(256, 256))
-output_dir = 'cropped_objects'
+output_dir = 'cropped_objects2'
 os.makedirs(output_dir, exist_ok=True)
 
 with torch.no_grad():
@@ -157,17 +157,57 @@ with torch.no_grad():
         original_image = Image.open(img_path).convert('RGB')
 
         for i, (cy, cx) in enumerate(centers):
-            left = max(0, cx - 50)
-            top = max(0, cy - 50)
-            right = min(orig_w, cx + 50)
-            bottom = min(orig_h, cy + 50)
+            # Всегда обрезаем ровно 70 пикселей во всех направлениях
+            crop_size = 140  # 70 пикселей в каждом направлении от центра
+            half_size = crop_size // 2
 
-            if right - left < 40 or bottom - top < 40:
+            # Вычисляем координаты центра кропа
+            crop_center_x = cx
+            crop_center_y = cy
+
+            # Вычисляем границы кропа без учета границ изображения
+            left = crop_center_x - half_size
+            top = crop_center_y - half_size
+            right = crop_center_x + half_size
+            bottom = crop_center_y + half_size
+
+            # Проверяем, выходит ли кроп за границы изображения
+            pad_left = max(0, -left)
+            pad_top = max(0, -top)
+            pad_right = max(0, right - orig_w)
+            pad_bottom = max(0, bottom - orig_h)
+
+            # Если нужно дополнение, создаем новое изображение с padding
+            if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
+                # Создаем изображение большего размера с черной подложкой
+                new_w = orig_w + pad_left + pad_right
+                new_h = orig_h + pad_top + pad_bottom
+                padded_image = Image.new('RGB', (new_w, new_h), (0, 0, 0))
+                # Вставляем оригинальное изображение в центр
+                padded_image.paste(original_image, (pad_left, pad_top))
+
+                # Корректируем координаты центра для нового изображения
+                new_center_x = crop_center_x + pad_left
+                new_center_y = crop_center_y + pad_top
+
+                # Вычисляем новые границы кропа
+                new_left = new_center_x - half_size
+                new_top = new_center_y - half_size
+                new_right = new_center_x + half_size
+                new_bottom = new_center_y + half_size
+
+                # Выполняем кроп
+                crop = padded_image.crop((new_left, new_top, new_right, new_bottom))
+            else:
+                # Если кроп полностью внутри изображения, обрезаем напрямую
+                crop = original_image.crop((left, top, right, bottom))
+
+            # Проверяем минимальный размер (хотя теперь он всегда будет 140x140)
+            if crop.size[0] < 40 or crop.size[1] < 40:
                 continue
 
-            crop = original_image.crop((left, top, right, bottom))
-            if crop.size != (40, 40):
-                crop = crop.resize((40, 40), Image.BILINEAR)
+            # Масштабируем до 40x40
+            crop = crop.resize((40, 40), Image.BILINEAR)
 
             base_name = os.path.splitext(os.path.basename(img_path))[0]
             crop.save(os.path.join(output_dir, f"{base_name}_obj{i:03d}.png"))
